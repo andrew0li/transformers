@@ -24,6 +24,7 @@ import os
 import random
 import sys
 import warnings
+import dis
 from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Type, Union
 
 import torch
@@ -1227,6 +1228,23 @@ class HFTracer(Tracer):
 
         for mod, attr_name, orig_cls in patched:
             setattr(mod, attr_name, orig_cls)
+
+    def iter(self, proxy: Proxy) -> Iterator[Proxy]:
+        frame = inspect.currentframe()
+        assert frame is not None
+        calling_frame = frame.f_back.f_back # we need to go back two frames, because it goes through Proxy.__iter__ first
+        assert calling_frame is not None
+        inst_list = list(dis.get_instructions(calling_frame.f_code))
+        if sys.version_info >= (3, 11):
+            from bisect import bisect_left
+            inst_idx = bisect_left(inst_list, calling_frame.f_lasti, key=lambda x: x.offset)
+        else:
+            inst_idx = calling_frame.f_lasti // 2
+        inst = inst_list[inst_idx]
+        if inst.opname == 'LIST_EXTEND':
+            return (proxy[i] for i in range(len(proxy)))
+
+        return super().iter(proxy)
 
     def trace(
         self,
